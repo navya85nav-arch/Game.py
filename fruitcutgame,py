@@ -1,0 +1,931 @@
+
+import pygame
+import random
+import math
+import json
+import os
+import sys
+
+pygame.init()
+
+# ==========================================
+# 1. SCREEN SETTINGS
+# ==========================================
+
+WIDTH = 1100
+HEIGHT = 700
+
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Fruit Cut - Ultimate Arcade")
+
+clock = pygame.time.Clock()
+
+# ==========================================
+# 2. COLORS AND FONTS
+# ==========================================
+
+WHITE = (255, 255, 255)
+BLACK = (12, 15, 35)
+PURPLE = (135, 75, 255)
+CYAN = (50, 220, 255)
+PINK = (255, 75, 160)
+GREEN = (70, 230, 150)
+GRAY = (170, 180, 210)
+
+TITLE_FONT = pygame.font.SysFont("arial", 65, bold=True)
+FONT = pygame.font.SysFont("arial", 30, bold=True)
+SMALL_FONT = pygame.font.SysFont("arial", 21)
+TINY_FONT = pygame.font.SysFont("arial", 17)
+
+# ==========================================
+# 3. GAME VARIABLES
+# ==========================================
+
+game_state = "menu"
+
+score = 0
+game_duration = 60
+start_time = 0
+remaining_time = 60
+
+difficulty = "MEDIUM"
+
+fruits = []
+particles = []
+trail = []
+
+last_spawn = 0
+
+player_name = "Player"
+
+LEADERBOARD_FILE = "fruit_leaderboard.json"
+
+# Difficulty settings
+DIFFICULTIES = {
+    "EASY": {
+        "spawn": 1100,
+        "speed": 6
+    },
+    "MEDIUM": {
+        "spawn": 800,
+        "speed": 8
+    },
+    "EXPERT": {
+        "spawn": 550,
+        "speed": 11
+    }
+}
+
+# Fruit designs
+FRUIT_TYPES = [
+    ("APPLE", (255, 55, 80)),
+    ("ORANGE", (255, 160, 30)),
+    ("LEMON", (255, 225, 45)),
+    ("GRAPE", (160, 80, 255)),
+    ("STRAWBERRY", (255, 65, 120)),
+    ("KIWI", (100, 210, 90)),
+    ("WATERMELON", (50, 220, 130))
+]
+
+# ==========================================
+# 4. LEADERBOARD
+# ==========================================
+
+def load_leaderboard():
+
+    if os.path.exists(LEADERBOARD_FILE):
+
+        try:
+            with open(LEADERBOARD_FILE, "r") as file:
+                return json.load(file)
+        except (json.JSONDecodeError, OSError):
+            return []
+
+    return []
+
+
+def save_score():
+
+    leaderboard = load_leaderboard()
+
+    leaderboard.append({
+        "name": player_name,
+        "score": score
+    })
+
+    leaderboard.sort(
+        key=lambda item: item["score"],
+        reverse=True
+    )
+
+    leaderboard = leaderboard[:10]
+
+    try:
+        with open(LEADERBOARD_FILE, "w") as file:
+            json.dump(leaderboard, file, indent=4)
+    except OSError:
+        print("Could not save leaderboard.")
+
+
+# ==========================================
+# 5. BACKGROUND ANIMATION
+# ==========================================
+
+background_particles = []
+
+for i in range(55):
+    background_particles.append({
+        "x": random.randint(0, WIDTH),
+        "y": random.randint(0, HEIGHT),
+        "size": random.randint(2, 5),
+        "speed": random.uniform(0.3, 1.5)
+    })
+
+
+def draw_background():
+
+    screen.fill(BLACK)
+
+    # Gradient-style background
+    for y in range(0, HEIGHT, 5):
+
+        ratio = y / HEIGHT
+
+        r = int(18 + ratio * 22)
+        g = int(12 + ratio * 10)
+        b = int(45 + ratio * 45)
+
+        pygame.draw.rect(
+            screen,
+            (r, g, b),
+            (0, y, WIDTH, 5)
+        )
+
+    # Floating particles
+    for p in background_particles:
+
+        p["y"] -= p["speed"]
+
+        if p["y"] < 0:
+            p["y"] = HEIGHT
+            p["x"] = random.randint(0, WIDTH)
+
+        pygame.draw.circle(
+            screen,
+            (65, 75, 130),
+            (int(p["x"]), int(p["y"])),
+            p["size"]
+        )
+
+
+# ==========================================
+# 6. GLASSMORPHISM CARD
+# ==========================================
+
+def draw_glass(x, y, w, h):
+
+    surface = pygame.Surface(
+        (w, h),
+        pygame.SRCALPHA
+    )
+
+    pygame.draw.rect(
+        surface,
+        (255, 255, 255, 24),
+        (0, 0, w, h),
+        border_radius=25
+    )
+
+    pygame.draw.rect(
+        surface,
+        (180, 190, 255, 90),
+        (0, 0, w, h),
+        width=2,
+        border_radius=25
+    )
+
+    screen.blit(surface, (x, y))
+
+
+# ==========================================
+# 7. BUTTON SYSTEM
+# ==========================================
+
+class Button:
+
+    def __init__(self, x, y, w, h, text, color=PURPLE):
+
+        self.rect = pygame.Rect(x, y, w, h)
+        self.text = text
+        self.color = color
+
+    def draw(self):
+
+        hovered = self.rect.collidepoint(
+            pygame.mouse.get_pos()
+        )
+
+        color = CYAN if hovered else self.color
+
+        pygame.draw.rect(
+            screen,
+            (35, 35, 75),
+            self.rect,
+            border_radius=15
+        )
+
+        pygame.draw.rect(
+            screen,
+            color,
+            self.rect,
+            width=2,
+            border_radius=15
+        )
+
+        label = SMALL_FONT.render(
+            self.text,
+            True,
+            WHITE
+        )
+
+        screen.blit(
+            label,
+            label.get_rect(center=self.rect.center)
+        )
+
+    def clicked(self, event):
+
+        return (
+            event.type == pygame.MOUSEBUTTONDOWN
+            and event.button == 1
+            and self.rect.collidepoint(event.pos)
+        )
+
+
+# ==========================================
+# 8. BUTTONS
+# ==========================================
+
+play_button = Button(400, 310, 300, 55, "PLAY GAME", PURPLE)
+
+leaderboard_button = Button(
+    400, 385, 300, 55, "LEADERBOARD", CYAN
+)
+
+exit_button = Button(
+    400, 460, 300, 55, "EXIT GAME", PINK
+)
+
+easy_button = Button(260, 300, 170, 55, "EASY", GREEN)
+medium_button = Button(465, 300, 170, 55, "MEDIUM", PURPLE)
+expert_button = Button(670, 300, 170, 55, "EXPERT", PINK)
+
+start_button = Button(
+    400, 400, 300, 55, "START GAME", GREEN
+)
+
+resume_button = Button(
+    400, 330, 300, 55, "RESUME", GREEN
+)
+
+restart_button = Button(
+    400, 405, 300, 55, "RESTART", CYAN
+)
+
+menu_button = Button(
+    400, 480, 300, 55, "MAIN MENU", PURPLE
+)
+
+
+# ==========================================
+# 9. TEXT FUNCTION
+# ==========================================
+
+def draw_text(text, font, color, x, y):
+
+    image = font.render(text, True, color)
+    screen.blit(image, (x, y))
+
+
+# ==========================================
+# 10. FRUIT CREATION
+# ==========================================
+
+def create_fruit():
+
+    name, color = random.choice(FRUIT_TYPES)
+
+    fruit = {
+        "x": random.randint(100, WIDTH - 100),
+        "y": HEIGHT + 40,
+        "vx": random.uniform(-3, 3),
+        "vy": -random.uniform(
+            DIFFICULTIES[difficulty]["speed"],
+            DIFFICULTIES[difficulty]["speed"] + 4
+        ),
+        "gravity": 0.15,
+        "radius": random.randint(25, 34),
+        "color": color,
+        "name": name
+    }
+
+    fruits.append(fruit)
+
+
+# ==========================================
+# 11. DRAW FRUITS
+# ==========================================
+
+def draw_fruit(fruit):
+
+    x = int(fruit["x"])
+    y = int(fruit["y"])
+    radius = fruit["radius"]
+
+    pygame.draw.circle(
+        screen,
+        fruit["color"],
+        (x, y),
+        radius
+    )
+
+    # Fruit shine
+    pygame.draw.circle(
+        screen,
+        (255, 255, 255),
+        (x - 9, y - 10),
+        6
+    )
+
+    # Fruit stem
+    pygame.draw.line(
+        screen,
+        GREEN,
+        (x, y - radius),
+        (x + 5, y - radius - 12),
+        4
+    )
+
+
+# ==========================================
+# 12. SLICING PARTICLES
+# ==========================================
+
+def create_particles(x, y, color):
+
+    for i in range(16):
+
+        angle = random.uniform(0, math.pi * 2)
+        speed = random.uniform(2, 6)
+
+        particles.append({
+            "x": x,
+            "y": y,
+            "vx": math.cos(angle) * speed,
+            "vy": math.sin(angle) * speed,
+            "life": 30,
+            "color": color
+        })
+
+
+def update_particles():
+
+    for p in particles[:]:
+
+        p["x"] += p["vx"]
+        p["y"] += p["vy"]
+
+        p["vy"] += 0.15
+        p["life"] -= 1
+
+        if p["life"] <= 0:
+            particles.remove(p)
+
+        else:
+
+            pygame.draw.circle(
+                screen,
+                p["color"],
+                (int(p["x"]), int(p["y"])),
+                4
+            )
+
+
+# ==========================================
+# 13. MOUSE SLICING DETECTION
+# ==========================================
+
+previous_mouse = None
+
+
+def distance_to_segment(point, start, end):
+
+    px, py = point
+    x1, y1 = start
+    x2, y2 = end
+
+    dx = x2 - x1
+    dy = y2 - y1
+
+    if dx == 0 and dy == 0:
+        return math.hypot(px - x1, py - y1)
+
+    t = (
+        (px - x1) * dx + (py - y1) * dy
+    ) / (dx * dx + dy * dy)
+
+    t = max(0, min(1, t))
+
+    closest_x = x1 + t * dx
+    closest_y = y1 + t * dy
+
+    return math.hypot(
+        px - closest_x,
+        py - closest_y
+    )
+
+
+def slice_fruits(start, end):
+
+    global score
+
+    for fruit in fruits[:]:
+
+        distance = distance_to_segment(
+            (fruit["x"], fruit["y"]),
+            start,
+            end
+        )
+
+        if distance < fruit["radius"] + 12:
+
+            score += 10
+
+            create_particles(
+                fruit["x"],
+                fruit["y"],
+                fruit["color"]
+            )
+
+            fruits.remove(fruit)
+
+
+# ==========================================
+# 14. START GAME
+# ==========================================
+
+def start_game():
+
+    global score
+    global start_time
+    global remaining_time
+    global last_spawn
+    global previous_mouse
+
+    score = 0
+    remaining_time = game_duration
+
+    fruits.clear()
+    particles.clear()
+    trail.clear()
+
+    previous_mouse = None
+
+    start_time = pygame.time.get_ticks()
+    last_spawn = start_time
+
+
+# ==========================================
+# 15. MENU SCREEN
+# ==========================================
+
+def draw_menu():
+
+    draw_glass(300, 100, 500, 470)
+
+    draw_text(
+        "FRUIT CUT",
+        TITLE_FONT,
+        CYAN,
+        365, 145
+    )
+
+    draw_text(
+        "ULTIMATE ARCADE",
+        SMALL_FONT,
+        PINK,
+        425, 225
+    )
+
+    play_button.draw()
+    leaderboard_button.draw()
+    exit_button.draw()
+
+
+# ==========================================
+# 16. DIFFICULTY SCREEN
+# ==========================================
+
+def draw_difficulty():
+
+    draw_glass(170, 200, 760, 240)
+
+    draw_text(
+        "SELECT DIFFICULTY",
+        TITLE_FONT,
+        CYAN,
+        290, 220
+    )
+
+    easy_button.draw()
+    medium_button.draw()
+    expert_button.draw()
+
+    draw_text(
+        "Choose your challenge!",
+        SMALL_FONT,
+        WHITE,
+        430, 375
+    )
+
+
+# ==========================================
+# 17. LEADERBOARD SCREEN
+# ==========================================
+
+def draw_leaderboard():
+
+    draw_glass(250, 65, 600, 560)
+
+    draw_text(
+        "TOP 10 PLAYERS",
+        TITLE_FONT,
+        CYAN,
+        325, 95
+    )
+
+    leaderboard = load_leaderboard()
+
+    if not leaderboard:
+
+        draw_text(
+            "No scores yet!",
+            FONT,
+            WHITE,
+            450, 300
+        )
+
+    else:
+
+        for index, player in enumerate(leaderboard[:10]):
+
+            y = 190 + index * 36
+
+            draw_text(
+                f"{index + 1}. {player['name']}",
+                SMALL_FONT,
+                WHITE,
+                340, y
+            )
+
+            draw_text(
+                str(player["score"]),
+                SMALL_FONT,
+                CYAN,
+                700, y
+            )
+
+    draw_text(
+        "Press ESC to go back",
+        SMALL_FONT,
+        PINK,
+        405, 570
+    )
+
+
+# ==========================================
+# 18. GAME OVER SCREEN
+# ==========================================
+
+def draw_gameover():
+
+    draw_glass(300, 150, 500, 430)
+
+    draw_text(
+        "GAME OVER!",
+        TITLE_FONT,
+        PINK,
+        370, 190
+    )
+
+    draw_text(
+        f"FINAL SCORE: {score}",
+        FONT,
+        CYAN,
+        390, 290
+    )
+
+    restart_button.draw()
+    menu_button.draw()
+
+
+# ==========================================
+# 19. PAUSE SCREEN
+# ==========================================
+
+def draw_pause():
+
+    overlay = pygame.Surface(
+        (WIDTH, HEIGHT),
+        pygame.SRCALPHA
+    )
+
+    overlay.fill((0, 0, 0, 175))
+    screen.blit(overlay, (0, 0))
+
+    draw_glass(300, 200, 500, 400)
+
+    draw_text(
+        "GAME PAUSED",
+        TITLE_FONT,
+        CYAN,
+        355, 230
+    )
+
+    resume_button.draw()
+    restart_button.draw()
+    menu_button.draw()
+
+
+# ==========================================
+# 20. MAIN GAME LOOP
+# ==========================================
+
+running = True
+
+while running:
+
+    clock.tick(60)
+
+    draw_background()
+
+    mouse_position = pygame.mouse.get_pos()
+
+    # --------------------------------------
+    # EVENTS
+    # --------------------------------------
+
+    for event in pygame.event.get():
+
+        if event.type == pygame.QUIT:
+            running = False
+
+        if event.type == pygame.KEYDOWN:
+
+            if event.key == pygame.K_ESCAPE:
+
+                if game_state == "playing":
+                    game_state = "paused"
+
+                elif game_state == "paused":
+                    game_state = "playing"
+
+                elif game_state in ["leaderboard", "difficulty"]:
+                    game_state = "menu"
+
+                elif game_state == "menu":
+                    running = False
+
+            if event.key == pygame.K_SPACE:
+
+                if game_state == "menu":
+                    game_state = "difficulty"
+
+                elif game_state == "difficulty":
+                    start_game()
+                    game_state = "playing"
+
+            if event.key == pygame.K_p:
+
+                if game_state == "playing":
+                    game_state = "paused"
+
+                elif game_state == "paused":
+                    game_state = "playing"
+
+        # Mouse slicing
+        if event.type == pygame.MOUSEMOTION:
+
+            if game_state == "playing":
+
+                current = event.pos
+
+                if previous_mouse is not None:
+
+                    slice_fruits(
+                        previous_mouse,
+                        current
+                    )
+
+                trail.append(current)
+
+                previous_mouse = current
+
+            else:
+                previous_mouse = None
+
+        # Mouse clicks
+        if event.type == pygame.MOUSEBUTTONDOWN:
+
+            if game_state == "menu":
+
+                if play_button.clicked(event):
+                    game_state = "difficulty"
+
+                elif leaderboard_button.clicked(event):
+                    game_state = "leaderboard"
+
+                elif exit_button.clicked(event):
+                    running = False
+
+            elif game_state == "difficulty":
+
+                if easy_button.clicked(event):
+                    difficulty = "EASY"
+                    start_game()
+                    game_state = "playing"
+
+                elif medium_button.clicked(event):
+                    difficulty = "MEDIUM"
+                    start_game()
+                    game_state = "playing"
+
+                elif expert_button.clicked(event):
+                    difficulty = "EXPERT"
+                    start_game()
+                    game_state = "playing"
+
+            elif game_state == "paused":
+
+                if resume_button.clicked(event):
+                    game_state = "playing"
+
+                elif restart_button.clicked(event):
+                    start_game()
+                    game_state = "playing"
+
+                elif menu_button.clicked(event):
+                    game_state = "menu"
+
+            elif game_state == "gameover":
+
+                if restart_button.clicked(event):
+                    start_game()
+                    game_state = "playing"
+
+                elif menu_button.clicked(event):
+                    game_state = "menu"
+
+    # --------------------------------------
+    # MENU
+    # --------------------------------------
+
+    if game_state == "menu":
+
+        draw_menu()
+
+    # --------------------------------------
+    # DIFFICULTY
+    # --------------------------------------
+
+    elif game_state == "difficulty":
+
+        draw_difficulty()
+
+    # --------------------------------------
+    # LEADERBOARD
+    # --------------------------------------
+
+    elif game_state == "leaderboard":
+
+        draw_leaderboard()
+
+    # --------------------------------------
+    # PLAYING
+    # --------------------------------------
+
+    elif game_state == "playing":
+
+        elapsed = (
+            pygame.time.get_ticks() - start_time
+        ) // 1000
+
+        remaining_time = max(
+            0,
+            game_duration - elapsed
+        )
+
+        # Spawn fruits
+        current_time = pygame.time.get_ticks()
+
+        spawn_delay = DIFFICULTIES[difficulty]["spawn"]
+
+        if current_time - last_spawn > spawn_delay:
+
+            create_fruit()
+            last_spawn = current_time
+
+        # Update fruits
+        for fruit in fruits[:]:
+
+            fruit["x"] += fruit["vx"]
+            fruit["y"] += fruit["vy"]
+
+            fruit["vy"] += fruit["gravity"]
+
+            draw_fruit(fruit)
+
+            if fruit["y"] > HEIGHT + 80:
+                fruits.remove(fruit)
+
+        # Slicing trail
+        if len(trail) > 12:
+            trail.pop(0)
+
+        if len(trail) > 1:
+
+            pygame.draw.lines(
+                screen,
+                CYAN,
+                False,
+                trail,
+                4
+            )
+
+        # Score panel
+        draw_glass(20, 15, 230, 65)
+
+        draw_text(
+            f"SCORE: {score}",
+            FONT,
+            CYAN,
+            45, 28
+        )
+
+        # Timer panel
+        draw_glass(830, 15, 245, 65)
+
+        timer_color = PINK if remaining_time <= 10 else WHITE
+
+        draw_text(
+            f"TIME: {remaining_time}",
+            FONT,
+            timer_color,
+            860, 28
+        )
+
+        draw_text(
+            difficulty,
+            SMALL_FONT,
+            CYAN,
+            480, 30
+        )
+
+        draw_text(
+            "P = PAUSE",
+            TINY_FONT,
+            WHITE,
+            490, 65
+        )
+
+        update_particles()
+
+        # Time over
+        if remaining_time <= 0:
+
+            save_score()
+            game_state = "gameover"
+
+    # --------------------------------------
+    # PAUSED
+    # --------------------------------------
+
+    elif game_state == "paused":
+
+        # Show pause menu
+        draw_pause()
+
+    # --------------------------------------
+    # GAME OVER
+    # --------------------------------------
+
+    elif game_state == "gameover":
+
+        update_particles()
+        draw_gameover()
+
+    pygame.display.flip()
+
+
+pygame.quit()
+sys.exit()
